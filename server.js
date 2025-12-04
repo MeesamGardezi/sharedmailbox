@@ -280,6 +280,7 @@ async function fetchEmailsFromAccount(accountConfig, accountName = 'Default') {
 
 /**
  * Refresh Gmail access token if expired
+ * FIXED: Now properly creates a new OAuth2 client instance for each request
  */
 async function refreshGmailToken(account, forceRefresh = false) {
     let expiryDate = account.oauth.expiryDate;
@@ -291,24 +292,58 @@ async function refreshGmailToken(account, forceRefresh = false) {
 
     const shouldRefresh = forceRefresh || !expiryDate || Date.now() >= expiryDate - 60000;
 
+    console.log('[Token] Checking token:', {
+        hasRefreshToken: !!account.oauth.refreshToken,
+        expiryDate: expiryDate ? new Date(expiryDate).toISOString() : 'none',
+        shouldRefresh,
+        forceRefresh
+    });
+
     if (shouldRefresh && account.oauth.refreshToken) {
         console.log('[Gmail] Refreshing access token...');
         try {
-            oauth2Client.setCredentials({ refresh_token: account.oauth.refreshToken });
-            const { credentials } = await oauth2Client.refreshAccessToken();
+            // Create a fresh OAuth2 client for the refresh
+            const refreshClient = new google.auth.OAuth2(
+                process.env.GOOGLE_CLIENT_ID,
+                process.env.GOOGLE_CLIENT_SECRET,
+                process.env.GOOGLE_REDIRECT_URI || `http://localhost:${port}/auth/google/callback`
+            );
+
+            refreshClient.setCredentials({
+                refresh_token: account.oauth.refreshToken
+            });
+
+            const { credentials } = await refreshClient.refreshAccessToken();
+
+            console.log('[Gmail] Token refreshed successfully:', {
+                hasAccessToken: !!credentials.access_token,
+                newExpiry: credentials.expiry_date ? new Date(credentials.expiry_date).toISOString() : 'none'
+            });
+
             return {
                 accessToken: credentials.access_token,
                 expiryDate: credentials.expiry_date,
+                refreshToken: account.oauth.refreshToken, // Keep the refresh token
                 refreshed: true
             };
         } catch (err) {
             console.error('[Gmail] Token refresh failed:', err.message);
+            console.error('[Gmail] Full refresh error:', JSON.stringify(err.response?.data || err, null, 2));
+            // Return existing token as fallback
+            return {
+                accessToken: account.oauth.accessToken,
+                expiryDate: expiryDate,
+                refreshToken: account.oauth.refreshToken,
+                refreshed: false,
+                error: err.message
+            };
         }
     }
 
     return {
         accessToken: account.oauth.accessToken,
         expiryDate: expiryDate,
+        refreshToken: account.oauth.refreshToken,
         refreshed: false
     };
 }
@@ -579,29 +614,92 @@ app.post('/api/test-connection', async (req, res) => {
 /**
  * POST /api/calendar/events
  * Fetch calendar events from Google Calendar
+ * FIXED: Better error handling and token management
  */
 app.post('/api/calendar/events', async (req, res) => {
     const { account, timeMin, timeMax } = req.body;
-    console.log('[Calendar] Request:', JSON.stringify({ hasAccount: !!account, hasOAuth: !!(account?.oauth) }));
+    console.log('[Calendar] Request received:', {
+        email: account?.email,
+        hasOAuth: !!(account?.oauth),
+        hasAccessToken: !!(account?.oauth?.accessToken),
+        hasRefreshToken: !!(account?.oauth?.refreshToken),
+        timeMin,
+        timeMax
+    });
 
     if (!account || !account.oauth) {
         return res.status(400).json({ error: 'Missing account or OAuth credentials' });
     }
 
-    try {
-        const tokenInfo = await refreshGmailToken(account, true); // Force refresh for calendar
-        oauth2Client.setCredentials({ access_token: tokenInfo.accessToken });
+    if (!account.oauth.refreshToken && !account.oauth.accessToken) {
+        return res.status(400).json({
+            error: 'No valid OAuth tokens found. Please reconnect your Gmail account.'
+        });
+    }
 
-        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    try {
+        // Refresh the token
+        const tokenInfo = await refreshGmailToken(account, true); // Force refresh for calendar
+
+        if (tokenInfo.error) {
+            console.error('[Calendar] Token refresh had error:', tokenInfo.error);
+        }
+
+        if (!tokenInfo.accessToken) {
+            return res.status(401).json({
+                error: 'Failed to obtain access token. Please reconnect your Gmail account.'
+            });
+        }
+
+        console.log('[Calendar] Using token:', {
+            hasAccessToken: !!tokenInfo.accessToken,
+            tokenLength: tokenInfo.accessToken?.length,
+            refreshed: tokenInfo.refreshed
+        });
+
+        // Create a fresh OAuth2 client for this request
+        const calendarAuth = new google.auth.OAuth2(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET,
+            process.env.GOOGLE_REDIRECT_URI || `http://localhost:${port}/auth/google/callback`
+        );
+
+        calendarAuth.setCredentials({
+            access_token: tokenInfo.accessToken,
+            refresh_token: tokenInfo.refreshToken
+        });
+
+        const calendar = google.calendar({ version: 'v3', auth: calendarAuth });
+
+        // Ensure datetime strings have timezone info (Google Calendar API requires it)
+        const formatDateTime = (dt) => {
+            if (!dt) return null;
+            // If already has timezone info (Z or +/-), return as-is
+            if (dt.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(dt)) {
+                return dt;
+            }
+            // Otherwise, append 'Z' to treat as UTC
+            return dt + 'Z';
+        };
+
+        const formattedTimeMin = formatDateTime(timeMin) || (new Date()).toISOString();
+        const formattedTimeMax = formatDateTime(timeMax);
+
+        console.log('[Calendar] Fetching events with:', {
+            timeMin: formattedTimeMin,
+            timeMax: formattedTimeMax
+        });
 
         const response = await calendar.events.list({
             calendarId: 'primary',
-            timeMin: timeMin || (new Date()).toISOString(),
-            timeMax: timeMax,
+            timeMin: formattedTimeMin,
+            timeMax: formattedTimeMax,
             maxResults: 50,
             singleEvents: true,
             orderBy: 'startTime',
         });
+
+        console.log('[Calendar] Success! Found', response.data.items?.length || 0, 'events');
 
         res.json({
             events: response.data.items,
@@ -612,9 +710,29 @@ app.post('/api/calendar/events', async (req, res) => {
         });
 
     } catch (err) {
-        console.error('Calendar API error:', err.message);
-        console.error('Error details:', err.response?.data || err);
-        res.status(500).json({ error: 'Failed to fetch calendar events: ' + err.message });
+        console.error('[Calendar] API error:', err.message);
+
+        // Log full error details
+        if (err.response) {
+            console.error('[Calendar] Response status:', err.response.status);
+            console.error('[Calendar] Response data:', JSON.stringify(err.response.data, null, 2));
+        }
+        if (err.errors) {
+            console.error('[Calendar] Errors array:', JSON.stringify(err.errors, null, 2));
+        }
+
+        // Provide more specific error messages
+        let errorMessage = 'Failed to fetch calendar events: ' + err.message;
+
+        if (err.response?.status === 401) {
+            errorMessage = 'Authentication failed. Please reconnect your Gmail account.';
+        } else if (err.response?.status === 403) {
+            errorMessage = 'Calendar access denied. Please ensure calendar permissions were granted during OAuth.';
+        } else if (err.response?.data?.error?.message) {
+            errorMessage = err.response.data.error.message;
+        }
+
+        res.status(err.response?.status || 500).json({ error: errorMessage });
     }
 });
 

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../inbox/components/app_sidebar.dart';
 
 class AccountsScreen extends StatefulWidget {
   const AccountsScreen({super.key});
@@ -35,21 +36,72 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Row(
+        children: [
+          AppSidebar(
+            onLogout: () => FirebaseAuth.instance.signOut(),
+          ),
+          Expanded(
+            child: _buildContent(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
     if (_companyId == null) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Email Accounts'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => _showAddAccountDialog(context),
+    return Column(
+      children: [
+        // Header
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(
+              bottom: BorderSide(color: Colors.grey.shade200),
+            ),
           ),
-        ],
-      ),
-      body: StreamBuilder<QuerySnapshot>(
+          child: Row(
+            children: [
+              const Icon(
+                Icons.manage_accounts,
+                color: Color(0xFF6366F1),
+                size: 28,
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Email Accounts',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF111827),
+                ),
+              ),
+              const Spacer(),
+              ElevatedButton.icon(
+                onPressed: () => _showAddAccountDialog(context),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add Account'),
+              ),
+            ],
+          ),
+        ),
+        // Content
+        Expanded(
+          child: _buildAccountsList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAccountsList() {
+    return StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('emailAccounts')
             .where('companyId', isEqualTo: _companyId)
@@ -112,8 +164,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
             },
           );
         },
-      ),
-    );
+      );
   }
 
   void _showAddAccountDialog(BuildContext context) {

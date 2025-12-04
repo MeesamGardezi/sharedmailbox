@@ -10,8 +10,6 @@ import '../../core/models/email_model.dart';
 import '../../core/ui/resizable_shell.dart';
 import 'components/app_sidebar.dart';
 import 'components/email_renderer/email_renderer.dart';
-import '../accounts/accounts_screen.dart';
-import '../calendar/calendar_screen.dart';
 
 class InboxScreen extends StatefulWidget {
   const InboxScreen({super.key});
@@ -21,7 +19,6 @@ class InboxScreen extends StatefulWidget {
 }
 
 class _InboxScreenState extends State<InboxScreen> {
-  int _selectedIndex = 0;
   Email? _selectedEmail;
   bool _isSidebarVisible = true;
   final TextEditingController _searchController = TextEditingController();
@@ -61,50 +58,13 @@ class _InboxScreenState extends State<InboxScreen> {
         body: Row(
           children: [
             AppSidebar(
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: (index) {
-                setState(() {
-                  _selectedIndex = index;
-                  _selectedEmail = null;
-                  _searchQuery = '';
-                  _searchController.clear();
-                });
-              },
               onLogout: () => FirebaseAuth.instance.signOut(),
             ),
             Expanded(
-              child: _buildContent(),
+              child: _buildInboxView(),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildContent() {
-    switch (_selectedIndex) {
-      case 0:
-        return _buildInboxView();
-      case 1:
-        return const AccountsScreen();
-      case 2:
-        return const CalendarScreen();
-      case 3:
-        return _buildTeamManagementPlaceholder();
-      default:
-        return const SizedBox.shrink();
-    }
-  }
-
-  Widget _buildTeamManagementPlaceholder() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.people_outline, size: 64, color: Colors.grey.shade300),
-          const SizedBox(height: 16),
-          Text('Team Management', style: TextStyle(color: Colors.grey.shade600, fontSize: 18)),
-        ],
       ),
     );
   }

@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../../../core/routing/routes.dart';
 
 class AppSidebar extends StatefulWidget {
-  final int selectedIndex;
-  final Function(int) onDestinationSelected;
   final VoidCallback onLogout;
 
   const AppSidebar({
     super.key,
-    required this.selectedIndex,
-    required this.onDestinationSelected,
     required this.onLogout,
   });
 
@@ -21,6 +19,8 @@ class _AppSidebarState extends State<AppSidebar> {
 
   @override
   Widget build(BuildContext context) {
+    final currentLocation = GoRouterState.of(context).matchedLocation;
+    
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
@@ -65,28 +65,32 @@ class _AppSidebarState extends State<AppSidebar> {
               icon: Icons.inbox_outlined,
               selectedIcon: Icons.inbox,
               label: 'Inbox',
-              index: 0,
+              route: AppRoutes.home,
+              isSelected: currentLocation == AppRoutes.home || currentLocation == AppRoutes.inbox,
             ),
             _buildNavItem(
               context,
               icon: Icons.manage_accounts_outlined,
               selectedIcon: Icons.manage_accounts,
               label: 'Accounts',
-              index: 1,
+              route: AppRoutes.accounts,
+              isSelected: currentLocation == AppRoutes.accounts,
             ),
             _buildNavItem(
               context,
               icon: Icons.calendar_today_outlined,
               selectedIcon: Icons.calendar_today,
               label: 'Calendar',
-              index: 2,
+              route: AppRoutes.calendar,
+              isSelected: currentLocation == AppRoutes.calendar,
             ),
             _buildNavItem(
               context,
               icon: Icons.people_outline,
               selectedIcon: Icons.people,
               label: 'Team',
-              index: 3,
+              route: AppRoutes.team,
+              isSelected: currentLocation == AppRoutes.team,
             ),
             
             const Spacer(),
@@ -98,7 +102,6 @@ class _AppSidebarState extends State<AppSidebar> {
               icon: Icons.logout,
               selectedIcon: Icons.logout,
               label: 'Logout',
-              index: 4,
               isDestructive: true,
               onTap: widget.onLogout,
             ),
@@ -114,11 +117,11 @@ class _AppSidebarState extends State<AppSidebar> {
     required IconData icon,
     required IconData selectedIcon,
     required String label,
-    required int index,
+    String? route,
+    bool isSelected = false,
     bool isDestructive = false,
     VoidCallback? onTap,
   }) {
-    final isSelected = widget.selectedIndex == index;
     final color = isDestructive
         ? Colors.red
         : isSelected
@@ -128,7 +131,7 @@ class _AppSidebarState extends State<AppSidebar> {
     final iconData = isSelected ? selectedIcon : icon;
 
     return InkWell(
-      onTap: onTap ?? () => widget.onDestinationSelected(index),
+      onTap: onTap ?? (route != null ? () => context.go(route) : null),
       child: Container(
         height: 56,
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
