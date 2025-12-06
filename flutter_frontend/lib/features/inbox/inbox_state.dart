@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/services/email_service.dart';
 import '../../core/models/email_model.dart';
+import '../../core/models/custom_inbox.dart';
 
 class InboxState extends ChangeNotifier {
   final EmailService _emailService = EmailService();
@@ -20,14 +21,22 @@ class InboxState extends ChangeNotifier {
   String? get error => _error;
   bool get hasMore => _pagination.values.any((p) => p['hasMore'] == true) || _pagination.isEmpty;
 
-  Future<void> fetchEmails() async {
+  Future<void> fetchEmails({String? customInboxId}) async {
     _isLoading = true;
     _error = null;
     _pagination = {};
     notifyListeners();
 
     try {
-      await _loadAccounts();
+      List<String>? filterAccountIds;
+      if (customInboxId != null) {
+        final inbox = await CustomInboxService.getInbox(customInboxId);
+        if (inbox != null) {
+          filterAccountIds = inbox.accountIds;
+        }
+      }
+
+      await _loadAccounts(filterAccountIds: filterAccountIds);
 
       if (_accounts.isEmpty) {
         _emails = [];
@@ -85,8 +94,9 @@ class InboxState extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadAccounts() async {
-    if (_accounts.isNotEmpty) return;
+  Future<void> _loadAccounts({List<String>? filterAccountIds}) async {
+    // Always reload accounts to ensure fresh state
+    _accounts = [];
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('Not authenticated');
@@ -103,12 +113,18 @@ class InboxState extends ChangeNotifier {
         .where('status', isEqualTo: 'active')
         .get();
 
-    _accounts = accountsSnapshot.docs.map((doc) {
+    var accounts = accountsSnapshot.docs.map((doc) {
       return {
         'id': doc.id,
         ..._sanitizeData(doc.data()),
       };
     }).toList();
+
+    if (filterAccountIds != null) {
+      accounts = accounts.where((acc) => filterAccountIds.contains(acc['id'])).toList();
+    }
+
+    _accounts = accounts;
   }
 
   Map<String, dynamic> _sanitizeData(Map<String, dynamic> data) {

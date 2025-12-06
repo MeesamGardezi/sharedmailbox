@@ -15,9 +15,25 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   final _companyController = TextEditingController();
   
+  // Focus nodes for keyboard navigation
+  final _companyFocusNode = FocusNode();
+  final _emailFocusNode = FocusNode();
+  final _passwordFocusNode = FocusNode();
+  
   bool _isLogin = true;
   bool _isLoading = false;
   String? _errorMessage;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _companyController.dispose();
+    _companyFocusNode.dispose();
+    _emailFocusNode.dispose();
+    _passwordFocusNode.dispose();
+    super.dispose();
+  }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -134,10 +150,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   if (!_isLogin) ...[
                     TextFormField(
                       controller: _companyController,
+                      focusNode: _companyFocusNode,
                       decoration: const InputDecoration(
                         labelText: 'Company Name',
                         hintText: 'Acme Inc.',
                       ),
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) => _emailFocusNode.requestFocus(),
                       validator: (value) => value == null || value.isEmpty ? 'Required' : null,
                     ),
                     const SizedBox(height: 16),
@@ -145,22 +164,28 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   TextFormField(
                     controller: _emailController,
+                    focusNode: _emailFocusNode,
                     decoration: const InputDecoration(
                       labelText: 'Email Address',
                       hintText: 'you@company.com',
                     ),
                     keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _passwordFocusNode.requestFocus(),
                     validator: (value) => value == null || !value.contains('@') ? 'Invalid email' : null,
                   ),
                   const SizedBox(height: 16),
                   
                   TextFormField(
                     controller: _passwordController,
+                    focusNode: _passwordFocusNode,
                     decoration: const InputDecoration(
                       labelText: 'Password',
                       hintText: '••••••••',
                     ),
                     obscureText: true,
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (_) => _isLoading ? null : _submit(),
                     validator: (value) => value == null || value.length < 6 ? 'Min 6 chars' : null,
                   ),
                   const SizedBox(height: 24),

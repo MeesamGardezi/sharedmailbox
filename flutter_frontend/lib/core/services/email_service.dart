@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/email_model.dart';
+import '../config/app_config.dart';
 
 class EmailFetchResult {
   final List<Email> emails;
@@ -10,13 +11,10 @@ class EmailFetchResult {
 }
 
 class EmailService {
-  // final String baseUrl = 'https://api.mybox.buildersolve.com/api';
-  final String baseUrl = 'http://localhost:3000/api';
-
   Future<EmailFetchResult> fetchEmails(List<Map<String, dynamic>> accounts, {Map<String, dynamic>? offsets}) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/emails'),
+        Uri.parse(AppConfig.emailsEndpoint),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'accounts': accounts,
@@ -42,7 +40,7 @@ class EmailService {
   Future<void> markAsRead(String id, Map<String, dynamic> account, String? messageId, String? uid) async {
     try {
       await http.post(
-        Uri.parse('$baseUrl/emails/$id/read'),
+        Uri.parse(AppConfig.emailReadEndpoint(id)),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'account': account,

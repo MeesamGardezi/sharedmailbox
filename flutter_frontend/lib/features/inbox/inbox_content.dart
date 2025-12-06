@@ -1,35 +1,31 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'inbox_state.dart';
 import '../../core/models/email_model.dart';
 import '../../core/ui/resizable_shell.dart';
-import 'components/app_sidebar.dart';
 import 'components/email_renderer/email_renderer.dart';
 
-class InboxScreen extends StatefulWidget {
-  const InboxScreen({super.key});
+/// Inbox content widget - displays the email list and detail view
+/// This is the content that goes inside the AppShell
+class InboxContent extends StatefulWidget {
+  final String? customInboxId;
+  
+  const InboxContent({
+    super.key,
+    this.customInboxId,
+  });
 
   @override
-  State<InboxScreen> createState() => _InboxScreenState();
+  State<InboxContent> createState() => _InboxContentState();
 }
 
-class _InboxScreenState extends State<InboxScreen> {
+class _InboxContentState extends State<InboxContent> {
   Email? _selectedEmail;
   bool _isSidebarVisible = true;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   final ScrollController _emailListScrollController = ScrollController();
-
-
-  @override
-  void initState() {
-    super.initState();
-  }
 
   @override
   void dispose() {
@@ -37,24 +33,21 @@ class _InboxScreenState extends State<InboxScreen> {
     _emailListScrollController.dispose();
     super.dispose();
   }
+  
+  @override
+  void didUpdateWidget(InboxContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.customInboxId != oldWidget.customInboxId) {
+      // Reset selection when switching inboxes
+      setState(() => _selectedEmail = null);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => InboxState()..fetchEmails(),
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        body: Row(
-          children: [
-            AppSidebar(
-              onLogout: () => FirebaseAuth.instance.signOut(),
-            ),
-            Expanded(
-              child: _buildInboxView(),
-            ),
-          ],
-        ),
-      ),
+      create: (_) => InboxState()..fetchEmails(customInboxId: widget.customInboxId),
+      child: _buildInboxView(),
     );
   }
 
@@ -151,7 +144,6 @@ class _InboxScreenState extends State<InboxScreen> {
                         )
                       : NotificationListener<ScrollNotification>(
                           onNotification: (ScrollNotification scrollInfo) {
-                            // Only trigger for unfiltered list (no search active)
                             if (_searchQuery.isEmpty &&
                                 scrollInfo.metrics.pixels >= 
                                 scrollInfo.metrics.maxScrollExtent - 200) {
@@ -165,7 +157,6 @@ class _InboxScreenState extends State<InboxScreen> {
                             controller: _emailListScrollController,
                             itemCount: filteredEmails.length + (state.isLoadingMore || (state.hasMore && _searchQuery.isEmpty) ? 1 : 0),
                             itemBuilder: (context, index) {
-                              // Loading indicator at the bottom
                               if (index == filteredEmails.length) {
                                 if (state.isLoadingMore) {
                                   return Container(
@@ -514,7 +505,6 @@ class _InboxScreenState extends State<InboxScreen> {
               
               const SizedBox(height: 24),
               
-              // Email Body with proper HTML rendering
               // Email Body with IFrame rendering
               Expanded(
                 child: Container(

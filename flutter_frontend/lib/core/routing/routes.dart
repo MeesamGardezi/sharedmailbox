@@ -4,9 +4,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 // Deferred imports for lazy loading
 import '../../features/auth/login_screen.dart' deferred as login;
-import '../../features/inbox/inbox_screen.dart' deferred as inbox;
-import '../../features/accounts/accounts_screen.dart' deferred as accounts;
-import '../../features/calendar/calendar_screen.dart' deferred as calendar;
+import '../../features/inbox/inbox_content.dart' deferred as inbox;
+import '../../features/accounts/accounts_content.dart' deferred as accounts;
+import '../../features/calendar/calendar_content.dart' deferred as calendar;
+import '../../features/custom_inboxes/custom_inboxes_screen.dart' deferred as custom_inboxes;
+import '../ui/app_shell.dart';
 
 /// Route names for easy navigation
 class AppRoutes {
@@ -15,6 +17,8 @@ class AppRoutes {
   static const String inbox = '/inbox';
   static const String accounts = '/accounts';
   static const String calendar = '/calendar';
+  static const String customInboxes = '/custom-inboxes';
+  static const String customInboxDetail = '/custom-inbox/:id';
   static const String team = '/team';
 }
 
@@ -52,12 +56,10 @@ class _DeferredWidgetState extends State<DeferredWidget> {
   @override
   Widget build(BuildContext context) {
     if (!_isLoaded) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: Color(0xFF6366F1),
-          ),
+      return const Center(
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: Color(0xFF6366F1),
         ),
       );
     }
@@ -68,6 +70,7 @@ class _DeferredWidgetState extends State<DeferredWidget> {
 /// App router configuration with go_router
 class AppRouter {
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
+  static final _shellNavigatorKey = GlobalKey<NavigatorState>();
   
   static GoRouter router(Stream<User?> authStream) {
     return GoRouter(
@@ -93,7 +96,7 @@ class AppRouter {
         return null;
       },
       routes: [
-        // Login route
+        // Login route (outside shell - no sidebar)
         GoRoute(
           path: AppRoutes.login,
           name: 'login',
@@ -109,59 +112,96 @@ class AppRouter {
           ),
         ),
         
-        // Home/Inbox route
-        GoRoute(
-          path: AppRoutes.home,
-          name: 'home',
-          pageBuilder: (context, state) => NoTransitionPage(
-            key: state.pageKey,
-            child: DeferredWidget(
-              libraryLoader: inbox.loadLibrary,
-              childBuilder: () => inbox.InboxScreen(),
+        // Shell route - wraps all authenticated routes with persistent sidebar
+        ShellRoute(
+          navigatorKey: _shellNavigatorKey,
+          builder: (context, state, child) {
+            return AppShell(child: child);
+          },
+          routes: [
+            // Home/Inbox route
+            GoRoute(
+              path: AppRoutes.home,
+              name: 'home',
+              pageBuilder: (context, state) => NoTransitionPage(
+                key: state.pageKey,
+                child: DeferredWidget(
+                  libraryLoader: inbox.loadLibrary,
+                  childBuilder: () => inbox.InboxContent(),
+                ),
+              ),
             ),
-          ),
-        ),
-        
-        // Inbox route (alias for home)
-        GoRoute(
-          path: AppRoutes.inbox,
-          name: 'inbox',
-          redirect: (context, state) => AppRoutes.home,
-        ),
-        
-        // Accounts route
-        GoRoute(
-          path: AppRoutes.accounts,
-          name: 'accounts',
-          pageBuilder: (context, state) => NoTransitionPage(
-            key: state.pageKey,
-            child: DeferredWidget(
-              libraryLoader: accounts.loadLibrary,
-              childBuilder: () => accounts.AccountsScreen(),
+            
+            // Inbox route (alias for home)
+            GoRoute(
+              path: AppRoutes.inbox,
+              name: 'inbox',
+              redirect: (context, state) => AppRoutes.home,
             ),
-          ),
-        ),
-        
-        // Calendar route
-        GoRoute(
-          path: AppRoutes.calendar,
-          name: 'calendar',
-          pageBuilder: (context, state) => NoTransitionPage(
-            key: state.pageKey,
-            child: DeferredWidget(
-              libraryLoader: calendar.loadLibrary,
-              childBuilder: () => calendar.CalendarScreen(),
+            
+            // Custom Inbox Detail route
+            GoRoute(
+              path: '/custom-inbox/:id',
+              name: 'customInboxDetail',
+              pageBuilder: (context, state) => NoTransitionPage(
+                key: state.pageKey,
+                child: DeferredWidget(
+                  libraryLoader: inbox.loadLibrary,
+                  childBuilder: () => inbox.InboxContent(
+                    customInboxId: state.pathParameters['id'],
+                  ),
+                ),
+              ),
             ),
-          ),
-        ),
-        
-        // Team route (placeholder)
-        GoRoute(
-          path: AppRoutes.team,
-          name: 'team',
-          pageBuilder: (context, state) => const NoTransitionPage(
-            child: TeamPlaceholderScreen(),
-          ),
+            
+            // Accounts route
+            GoRoute(
+              path: AppRoutes.accounts,
+              name: 'accounts',
+              pageBuilder: (context, state) => NoTransitionPage(
+                key: state.pageKey,
+                child: DeferredWidget(
+                  libraryLoader: accounts.loadLibrary,
+                  childBuilder: () => accounts.AccountsContent(),
+                ),
+              ),
+            ),
+            
+            // Calendar route
+            GoRoute(
+              path: AppRoutes.calendar,
+              name: 'calendar',
+              pageBuilder: (context, state) => NoTransitionPage(
+                key: state.pageKey,
+                child: DeferredWidget(
+                  libraryLoader: calendar.loadLibrary,
+                  childBuilder: () => calendar.CalendarContent(),
+                ),
+              ),
+            ),
+            
+            // Custom Inboxes route
+            GoRoute(
+              path: AppRoutes.customInboxes,
+              name: 'customInboxes',
+              pageBuilder: (context, state) => NoTransitionPage(
+                key: state.pageKey,
+                child: DeferredWidget(
+                  libraryLoader: custom_inboxes.loadLibrary,
+                  childBuilder: () => custom_inboxes.CustomInboxesScreen(),
+                ),
+              ),
+            ),
+            
+            // Team route (placeholder)
+            GoRoute(
+              path: AppRoutes.team,
+              name: 'team',
+              pageBuilder: (context, state) => const NoTransitionPage(
+                child: TeamPlaceholderContent(),
+              ),
+            ),
+          ],
         ),
       ],
       errorPageBuilder: (context, state) => MaterialPage(
@@ -205,40 +245,32 @@ class GoRouterRefreshStream extends ChangeNotifier {
   }
 }
 
-/// Team placeholder screen
-class TeamPlaceholderScreen extends StatelessWidget {
-  const TeamPlaceholderScreen({super.key});
+/// Team placeholder content (no sidebar - rendered inside shell)
+class TeamPlaceholderContent extends StatelessWidget {
+  const TeamPlaceholderContent({super.key});
   
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.people_outline, size: 80, color: Colors.grey.shade300),
-            const SizedBox(height: 24),
-            Text(
-              'Team Management',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: Colors.grey.shade600,
-              ),
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.people_outline, size: 80, color: Colors.grey.shade300),
+          const SizedBox(height: 24),
+          Text(
+            'Team Management',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: Colors.grey.shade600,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Coming Soon',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey.shade500,
-              ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Coming Soon',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.grey.shade500,
             ),
-            const SizedBox(height: 32),
-            ElevatedButton.icon(
-              onPressed: () => context.go(AppRoutes.home),
-              icon: const Icon(Icons.arrow_back),
-              label: const Text('Back to Inbox'),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

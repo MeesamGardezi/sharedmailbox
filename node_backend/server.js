@@ -48,6 +48,35 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 // ============================================================================
+// MICROSOFT OAUTH CONFIGURATION
+// ============================================================================
+
+const msal = require('@azure/msal-node');
+const axios = require('axios');
+
+const MICROSOFT_SCOPES = [
+    'openid',
+    'profile',
+    'email',
+    'offline_access',
+    'https://graph.microsoft.com/Mail.Read',
+    'https://graph.microsoft.com/Mail.ReadWrite',
+    'https://graph.microsoft.com/Calendars.Read',
+    'https://graph.microsoft.com/User.Read'
+];
+
+const msalConfig = {
+    auth: {
+        clientId: process.env.MICROSOFT_CLIENT_ID,
+        authority: process.env.MICROSOFT_AUTHORITY || 'https://login.microsoftonline.com/common',
+        clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+    }
+};
+
+const msalClient = new msal.ConfidentialClientApplication(msalConfig);
+const MICROSOFT_REDIRECT_URI = process.env.MICROSOFT_REDIRECT_URI || `http://localhost:${port}/auth/microsoft/callback`;
+
+// ============================================================================
 // OAUTH ROUTES
 // ============================================================================
 
@@ -160,6 +189,335 @@ app.get('/auth/google/callback', async (req, res) => {
         res.status(500).send(`Authentication failed: ${error.message}`);
     }
 });
+
+// ============================================================================
+// MICROSOFT OAUTH ROUTES
+// ============================================================================
+
+/**
+ * GET /auth/microsoft
+ * Initiate Microsoft OAuth flow
+ * Query params: companyId, userId
+ */
+app.get('/auth/microsoft', async (req, res) => {
+    const { companyId, userId } = req.query;
+
+    if (!companyId || !userId) {
+        return res.status(400).send('Missing companyId or userId');
+    }
+
+    // Encode state to pass through OAuth flow
+    const state = Buffer.from(JSON.stringify({ companyId, userId })).toString('base64');
+
+    const authUrlParameters = {
+        scopes: MICROSOFT_SCOPES,
+        redirectUri: MICROSOFT_REDIRECT_URI,
+        state: state,
+        prompt: 'consent'
+    };
+
+    try {
+        const authUrl = await msalClient.getAuthCodeUrl(authUrlParameters);
+        res.redirect(authUrl);
+    } catch (error) {
+        console.error('Microsoft OAuth Error:', error);
+        res.status(500).send(`Failed to initiate Microsoft OAuth: ${error.message}`);
+    }
+});
+
+/**
+ * GET /auth/microsoft/callback
+ * Handle Microsoft OAuth callback
+ */
+app.get('/auth/microsoft/callback', async (req, res) => {
+    const { code, state, error, error_description } = req.query;
+
+    if (error) {
+        console.error('Microsoft OAuth Error:', error, error_description);
+        return res.status(400).send(`Authentication failed: ${error_description}`);
+    }
+
+    if (!code || !state) {
+        return res.status(400).send('Missing code or state');
+    }
+
+    try {
+        // Decode state
+        const { companyId, userId } = JSON.parse(Buffer.from(state, 'base64').toString());
+
+        // Exchange code for tokens
+        const tokenRequest = {
+            code: code,
+            scopes: MICROSOFT_SCOPES,
+            redirectUri: MICROSOFT_REDIRECT_URI
+        };
+
+        const tokenResponse = await msalClient.acquireTokenByCode(tokenRequest);
+
+        console.log('[Microsoft] Token acquired successfully');
+
+        // Get user profile from Microsoft Graph
+        const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
+            headers: {
+                'Authorization': `Bearer ${tokenResponse.accessToken}`
+            }
+        });
+
+        const email = userResponse.data.mail || userResponse.data.userPrincipalName;
+        const displayName = userResponse.data.displayName || email;
+
+        console.log('[Microsoft] User info:', { email, displayName });
+
+        // Save account to Firestore
+        const accountData = {
+            companyId,
+            addedBy: userId,
+            name: displayName,
+            email: email,
+            provider: 'microsoft-oauth',
+            status: 'active',
+            oauth: {
+                accessToken: tokenResponse.accessToken,
+                refreshToken: tokenResponse.account?.homeAccountId ? tokenResponse.account.homeAccountId : null,
+                expiryDate: tokenResponse.expiresOn ? tokenResponse.expiresOn.getTime() : null,
+                scope: MICROSOFT_SCOPES.join(' '),
+                tokenType: 'Bearer',
+                idToken: tokenResponse.idToken,
+                accountId: tokenResponse.account?.homeAccountId
+            },
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Check if account already exists
+        const existingAccount = await db.collection('emailAccounts')
+            .where('companyId', '==', companyId)
+            .where('email', '==', email)
+            .get();
+
+        if (!existingAccount.empty) {
+            // Update existing account
+            await existingAccount.docs[0].ref.update({
+                ...accountData,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } else {
+            // Create new account
+            await db.collection('emailAccounts').add(accountData);
+        }
+
+        // Return success page
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
+        res.send(`
+            <html>
+                <body style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #f5f7fa;">
+                    <div style="background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;">
+                        <h1 style="color: #0078d4; margin-bottom: 16px;">Authentication Successful!</h1>
+                        <p style="color: #4b5563; margin-bottom: 24px;">Your Microsoft account has been connected successfully.</p>
+                        <p style="color: #6b7280; font-size: 14px;">You can close this window and return to the app.</p>
+                        <script>
+                            setTimeout(() => {
+                                window.close();
+                            }, 3000);
+                        </script>
+                    </div>
+                </body>
+            </html>
+        `);
+
+    } catch (error) {
+        console.error('Microsoft OAuth Callback Error:', error);
+        res.status(500).send(`Authentication failed: ${error.message}`);
+    }
+});
+
+/**
+ * Refresh Microsoft access token
+ */
+async function refreshMicrosoftToken(account, forceRefresh = false) {
+    let expiryDate = account.oauth.expiryDate;
+
+    // Handle Firestore Timestamp objects
+    if (expiryDate && typeof expiryDate === 'object' && expiryDate._seconds) {
+        expiryDate = expiryDate._seconds * 1000;
+    }
+
+    const shouldRefresh = forceRefresh || !expiryDate || Date.now() >= expiryDate - 60000;
+
+    console.log('[Microsoft Token] Checking token:', {
+        hasAccountId: !!account.oauth.accountId,
+        expiryDate: expiryDate ? new Date(expiryDate).toISOString() : 'none',
+        shouldRefresh,
+        forceRefresh
+    });
+
+    if (shouldRefresh && account.oauth.accountId) {
+        console.log('[Microsoft] Refreshing access token...');
+        try {
+            // Get the account from MSAL cache or create a silent request
+            const silentRequest = {
+                scopes: MICROSOFT_SCOPES,
+                account: {
+                    homeAccountId: account.oauth.accountId
+                }
+            };
+
+            // Try to acquire token silently (from cache or refresh)
+            // Note: This might fail if token cache isn't persistent
+            // In that case, user needs to re-authenticate
+            const tokenResponse = await msalClient.acquireTokenSilent(silentRequest);
+
+            console.log('[Microsoft] Token refreshed successfully');
+
+            return {
+                accessToken: tokenResponse.accessToken,
+                expiryDate: tokenResponse.expiresOn ? tokenResponse.expiresOn.getTime() : null,
+                accountId: account.oauth.accountId,
+                refreshed: true
+            };
+        } catch (err) {
+            console.error('[Microsoft] Token refresh failed:', err.message);
+            // Return existing token as fallback (it might still work)
+            return {
+                accessToken: account.oauth.accessToken,
+                expiryDate: expiryDate,
+                accountId: account.oauth.accountId,
+                refreshed: false,
+                error: err.message
+            };
+        }
+    }
+
+    return {
+        accessToken: account.oauth.accessToken,
+        expiryDate: expiryDate,
+        accountId: account.oauth.accountId,
+        refreshed: false
+    };
+}
+
+/**
+ * Fetch emails from Microsoft/Outlook using Graph API
+ */
+async function fetchEmailsFromMicrosoft(account, skipToken = null) {
+    console.log(`[Microsoft] Fetching emails for ${account.email}...`);
+
+    try {
+        const tokenInfo = await refreshMicrosoftToken(account);
+
+        let url = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=20&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,toRecipients,receivedDateTime,isRead,conversationId';
+
+        if (skipToken) {
+            url = skipToken; // Microsoft Graph uses full URL as skip token
+        }
+
+        const response = await axios.get(url, {
+            headers: {
+                'Authorization': `Bearer ${tokenInfo.accessToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const messages = response.data.value || [];
+        const nextLink = response.data['@odata.nextLink'];
+
+        console.log(`[Microsoft] Fetched ${messages.length} messages`);
+
+        const emails = messages.map(msg => ({
+            id: `microsoft_${account.email}_${msg.id}`,
+            messageId: msg.id,
+            threadId: msg.conversationId,
+            accountName: account.name || account.email,
+            accountType: 'microsoft',
+            subject: msg.subject || '(No Subject)',
+            from: msg.from?.emailAddress ? `${msg.from.emailAddress.name || ''} <${msg.from.emailAddress.address}>` : 'Unknown',
+            to: msg.toRecipients?.map(r => r.emailAddress?.address).join(', ') || '',
+            date: new Date(msg.receivedDateTime),
+            text: msg.bodyPreview || '',
+            html: msg.body?.content || '',
+            isRead: msg.isRead,
+            snippet: (msg.bodyPreview || '').substring(0, 200)
+        }));
+
+        return {
+            emails,
+            nextPageToken: nextLink,
+            tokenInfo
+        };
+
+    } catch (err) {
+        console.error(`[Microsoft] Error fetching emails:`, err.message);
+        if (err.response) {
+            console.error('[Microsoft] Response status:', err.response.status);
+            console.error('[Microsoft] Response data:', JSON.stringify(err.response.data, null, 2));
+        }
+        return { emails: [], nextPageToken: null, tokenInfo: null };
+    }
+}
+
+/**
+ * Fetch calendar events from Microsoft/Outlook using Graph API
+ */
+async function fetchCalendarEventsFromMicrosoft(account, timeMin, timeMax) {
+    console.log(`[Microsoft Calendar] Fetching events for ${account.email}...`);
+
+    try {
+        const tokenInfo = await refreshMicrosoftToken(account, true);
+
+        const response = await axios.get('https://graph.microsoft.com/v1.0/me/calendar/calendarView', {
+            headers: {
+                'Authorization': `Bearer ${tokenInfo.accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            params: {
+                startDateTime: timeMin,
+                endDateTime: timeMax,
+                $top: 50,
+                $orderby: 'start/dateTime',
+                $select: 'id,subject,bodyPreview,start,end,location,organizer,attendees,isAllDay'
+            }
+        });
+
+        const events = response.data.value || [];
+        console.log(`[Microsoft Calendar] Fetched ${events.length} events`);
+
+        // Transform to a common format similar to Google Calendar
+        return {
+            events: events.map(event => ({
+                id: event.id,
+                summary: event.subject,
+                description: event.bodyPreview,
+                start: {
+                    dateTime: event.start?.dateTime,
+                    timeZone: event.start?.timeZone
+                },
+                end: {
+                    dateTime: event.end?.dateTime,
+                    timeZone: event.end?.timeZone
+                },
+                location: event.location?.displayName,
+                organizer: {
+                    email: event.organizer?.emailAddress?.address,
+                    displayName: event.organizer?.emailAddress?.name
+                },
+                attendees: event.attendees?.map(a => ({
+                    email: a.emailAddress?.address,
+                    displayName: a.emailAddress?.name,
+                    responseStatus: a.status?.response
+                })),
+                source: 'microsoft'
+            })),
+            tokenInfo
+        };
+
+    } catch (err) {
+        console.error(`[Microsoft Calendar] Error:`, err.message);
+        if (err.response) {
+            console.error('[Microsoft Calendar] Response status:', err.response.status);
+            console.error('[Microsoft Calendar] Response data:', JSON.stringify(err.response.data, null, 2));
+        }
+        return { events: [], tokenInfo: null };
+    }
+}
 
 // ============================================================================
 // IMAP CONFIGURATION
@@ -486,6 +844,37 @@ app.post('/api/emails', async (req, res) => {
                     }
 
                     return result.emails;
+                } else if (account.provider === 'microsoft-oauth') {
+                    // Microsoft OAuth account
+                    const skipToken = offsets?.[account.email] || null;
+                    const result = await fetchEmailsFromMicrosoft(account, skipToken);
+
+                    pagination[account.email] = {
+                        nextPageToken: result.nextPageToken,
+                        hasMore: !!result.nextPageToken
+                    };
+
+                    // Update token in Firestore if refreshed
+                    if (result.tokenInfo?.refreshed) {
+                        try {
+                            const accountRef = await db.collection('emailAccounts')
+                                .where('email', '==', account.email)
+                                .where('companyId', '==', account.companyId)
+                                .limit(1)
+                                .get();
+
+                            if (!accountRef.empty) {
+                                await accountRef.docs[0].ref.update({
+                                    'oauth.accessToken': result.tokenInfo.accessToken,
+                                    'oauth.expiryDate': result.tokenInfo.expiryDate
+                                });
+                            }
+                        } catch (updateErr) {
+                            console.error('Error updating Microsoft token in Firestore:', updateErr);
+                        }
+                    }
+
+                    return result.emails;
                 } else if (account.imap) {
                     // IMAP account
                     const config = {
@@ -613,13 +1002,14 @@ app.post('/api/test-connection', async (req, res) => {
 
 /**
  * POST /api/calendar/events
- * Fetch calendar events from Google Calendar
+ * Fetch calendar events from Google Calendar or Microsoft Calendar
  * FIXED: Better error handling and token management
  */
 app.post('/api/calendar/events', async (req, res) => {
     const { account, timeMin, timeMax } = req.body;
     console.log('[Calendar] Request received:', {
         email: account?.email,
+        provider: account?.provider,
         hasOAuth: !!(account?.oauth),
         hasAccessToken: !!(account?.oauth?.accessToken),
         hasRefreshToken: !!(account?.oauth?.refreshToken),
@@ -633,9 +1023,30 @@ app.post('/api/calendar/events', async (req, res) => {
 
     if (!account.oauth.refreshToken && !account.oauth.accessToken) {
         return res.status(400).json({
-            error: 'No valid OAuth tokens found. Please reconnect your Gmail account.'
+            error: 'No valid OAuth tokens found. Please reconnect your account.'
         });
     }
+
+    // Handle Microsoft OAuth accounts
+    if (account.provider === 'microsoft-oauth') {
+        try {
+            const result = await fetchCalendarEventsFromMicrosoft(account, timeMin, timeMax);
+
+            res.json({
+                events: result.events,
+                tokenRefreshed: result.tokenInfo?.refreshed ? {
+                    accessToken: result.tokenInfo.accessToken,
+                    expiryDate: result.tokenInfo.expiryDate
+                } : null
+            });
+        } catch (err) {
+            console.error('[Microsoft Calendar] Error:', err.message);
+            res.status(500).json({ error: 'Failed to fetch Microsoft calendar events: ' + err.message });
+        }
+        return;
+    }
+
+    // Handle Google OAuth accounts (default)
 
     try {
         // Refresh the token
@@ -759,11 +1170,12 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
     res.json({
         name: 'SharedBox API',
-        version: '2.0.0',
+        version: '2.1.0',
         status: 'running',
         endpoints: {
             health: '/health',
-            oauth: '/auth/google',
+            googleOAuth: '/auth/google',
+            microsoftOAuth: '/auth/microsoft',
             emails: '/api/emails',
             calendar: '/api/calendar/events'
         }

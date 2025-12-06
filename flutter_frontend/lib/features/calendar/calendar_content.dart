@@ -4,29 +4,24 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import '../inbox/components/app_sidebar.dart';
 import '../../core/config/app_config.dart';
 
 // ============================================================================
-// CALENDAR SCREEN - Main Entry Point
+// CALENDAR CONTENT - Without sidebar, for use inside AppShell
 // ============================================================================
 
-class CalendarScreen extends StatefulWidget {
-  const CalendarScreen({super.key});
+class CalendarContent extends StatefulWidget {
+  const CalendarContent({super.key});
 
   @override
-  State<CalendarScreen> createState() => _CalendarScreenState();
+  State<CalendarContent> createState() => _CalendarContentState();
 }
 
-class _CalendarScreenState extends State<CalendarScreen> {
+class _CalendarContentState extends State<CalendarContent> {
   final _user = FirebaseAuth.instance.currentUser;
   String? _companyId;
   bool _isLoading = true;
   String? _error;
-
-  // Sidebar state
-  bool _isSidebarOpen = true;
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // Calendar state
   DateTime _focusedMonth = DateTime.now();
@@ -34,9 +29,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
   CalendarViewType _viewType = CalendarViewType.month;
   Map<DateTime, List<CalendarEvent>> _events = {};
   List<CalendarEvent> _selectedEvents = [];
-
-  // Responsive breakpoint
-  static const double _desktopBreakpoint = 768;
 
   @override
   void initState() {
@@ -193,50 +185,22 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _loadCalendarEvents();
   }
 
-  void _toggleSidebar() {
-    setState(() {
-      _isSidebarOpen = !_isSidebarOpen;
-    });
-  }
-
-  bool _isDesktop(BuildContext context) {
-    return MediaQuery.of(context).size.width >= _desktopBreakpoint;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isDesktop = _isDesktop(context);
+    return Column(
+      children: [
+        // Google Calendar-style Header
+        _buildHeader(),
 
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: Colors.white,
-      drawer: isDesktop ? null : _buildSidebarContent(),
-      body: Column(
-        children: [
-          // Google Calendar-style Header
-          _buildHeader(isDesktop),
-
-          // Main Content
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? _buildErrorState()
-                    : Row(
-                        children: [
-                          // Sidebar (desktop only)
-                          if (isDesktop && _isSidebarOpen)
-                            _buildSidebarContent(),
-
-                          // Calendar + Events Panel
-                          Expanded(
-                            child: _buildMainContent(),
-                          ),
-                        ],
-                      ),
-          ),
-        ],
-      ),
+        // Main Content
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? _buildErrorState()
+                  : _buildMainContent(),
+        ),
+      ],
     );
   }
 
@@ -244,10 +208,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
   // HEADER
   // ============================================================================
 
-  Widget _buildHeader(bool isDesktop) {
+  Widget _buildHeader() {
     return Container(
       height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
@@ -259,22 +223,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
       ),
       child: Row(
         children: [
-          // Hamburger menu
-          IconButton(
-            icon: const Icon(Icons.menu),
-            onPressed: () {
-              if (isDesktop) {
-                _toggleSidebar();
-              } else {
-                _scaffoldKey.currentState?.openDrawer();
-              }
-            },
-            color: const Color(0xFF5F6368),
-            splashRadius: 20,
-          ),
-
-          const SizedBox(width: 8),
-
           // Calendar icon and title
           Row(
             children: [
@@ -421,150 +369,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   // ============================================================================
-  // SIDEBAR
-  // ============================================================================
-
-  Widget _buildSidebarContent() {
-    return Container(
-      width: 256,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          right: BorderSide(
-            color: Colors.grey.shade200,
-            width: 1,
-          ),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-
-          // My calendars section
-          _buildCalendarSection(
-            title: 'My calendars',
-            calendars: [
-              CalendarInfo(
-                name: 'Primary',
-                color: const Color(0xFF039BE5),
-                isChecked: true,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // Other calendars section
-          _buildCalendarSection(
-            title: 'Other calendars',
-            calendars: [
-              CalendarInfo(
-                name: 'Holidays',
-                color: const Color(0xFF33B679),
-                isChecked: true,
-              ),
-            ],
-          ),
-
-          const Spacer(),
-
-          // Footer
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              'Synced with Google Calendar',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade500,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCalendarSection({
-    required String title,
-    required List<CalendarInfo> calendars,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF3C4043),
-                  ),
-                ),
-              ),
-              Icon(
-                Icons.keyboard_arrow_down,
-                size: 20,
-                color: Colors.grey.shade600,
-              ),
-            ],
-          ),
-        ),
-        ...calendars.map((cal) => _buildCalendarItem(cal)),
-      ],
-    );
-  }
-
-  Widget _buildCalendarItem(CalendarInfo calendar) {
-    return InkWell(
-      onTap: () {
-        // Toggle calendar visibility (future feature)
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            Container(
-              width: 18,
-              height: 18,
-              decoration: BoxDecoration(
-                color: calendar.isChecked ? calendar.color : Colors.transparent,
-                borderRadius: BorderRadius.circular(2),
-                border: Border.all(
-                  color: calendar.color,
-                  width: 2,
-                ),
-              ),
-              child: calendar.isChecked
-                  ? const Icon(
-                      Icons.check,
-                      size: 14,
-                      color: Colors.white,
-                    )
-                  : null,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                calendar.name,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF3C4043),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================================
-  // MAIN CONTENT
+  // MAIN CONTENT (No sidebar - just calendar and events panel)
   // ============================================================================
 
   Widget _buildMainContent() {
@@ -672,17 +477,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
       ),
       child: Row(
         children: days.map((day) {
-          final isWeekend = day == 'SUN' || day == 'SAT';
           return Expanded(
             child: Center(
               child: Text(
                 day,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
-                  color: isWeekend
-                      ? const Color(0xFF70757A)
-                      : const Color(0xFF70757A),
+                  color: Color(0xFF70757A),
                 ),
               ),
             ),
@@ -817,7 +619,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w500,
-          color: Colors.white.withOpacity(isCurrentMonth ? 1.0 : 0.6),
+          color: Colors.white.withValues(alpha: isCurrentMonth ? 1.0 : 0.6),
         ),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -921,7 +723,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -1052,18 +854,6 @@ enum CalendarViewType {
 
   final String label;
   const CalendarViewType(this.label);
-}
-
-class CalendarInfo {
-  final String name;
-  final Color color;
-  final bool isChecked;
-
-  CalendarInfo({
-    required this.name,
-    required this.color,
-    this.isChecked = true,
-  });
 }
 
 class CalendarEvent {

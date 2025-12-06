@@ -1,15 +1,55 @@
-node_modules/
-.env
+# General
 .DS_Store
-firebase-service-account.json
-*.log
-.vscode/
 .idea/
+.vscode/
+*.log
+*.swp
+.history/
 
-# Flutter/Dart
-flutter_frontend/.dart_tool/
-flutter_frontend/.flutter-plugins
-flutter_frontend/.flutter-plugins-dependencies
-flutter_frontend/.packages
-flutter_frontend/build/
-flutter_frontend/pubspec.lock
+# Node.js / Backend
+**/node_modules/
+**/npm-debug.log
+**/yarn-error.log
+**/.env
+**/coverage/
+**/dist/
+
+# Security / Secrets
+**/firebase-service-account.json
+**/*.pem
+**/*.key
+
+# Flutter / Dart
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.packages
+**/build/
+
+# Android
+**/android/local.properties
+**/android/.gradle
+**/android/app/debug
+**/android/app/profile
+**/android/app/release
+**/android/app/build
+**/android/captures
+**/android/gradlew
+**/android/gradlew.bat
+
+# iOS
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Mac
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
