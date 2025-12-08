@@ -8,6 +8,7 @@ import '../../features/inbox/inbox_content.dart' deferred as inbox;
 import '../../features/accounts/accounts_content.dart' deferred as accounts;
 import '../../features/calendar/calendar_content.dart' deferred as calendar;
 import '../../features/custom_inboxes/custom_inboxes_screen.dart' deferred as custom_inboxes;
+import '../../features/whatsapp/whatsapp_screen.dart' deferred as whatsapp;
 import '../ui/app_shell.dart';
 
 /// Route names for easy navigation
@@ -20,6 +21,7 @@ class AppRoutes {
   static const String customInboxes = '/custom-inboxes';
   static const String customInboxDetail = '/custom-inbox/:id';
   static const String team = '/team';
+  static const String whatsapp = '/whatsapp';
 }
 
 /// Deferred loading wrapper widget
@@ -199,6 +201,19 @@ class AppRouter {
               name: 'team',
               pageBuilder: (context, state) => const NoTransitionPage(
                 child: TeamPlaceholderContent(),
+              ),
+            ),
+            
+            // WhatsApp route
+            GoRoute(
+              path: AppRoutes.whatsapp,
+              name: 'whatsapp',
+              pageBuilder: (context, state) => NoTransitionPage(
+                key: state.pageKey,
+                child: DeferredWidget(
+                  libraryLoader: whatsapp.loadLibrary,
+                  childBuilder: () => whatsapp.WhatsAppScreen(),
+                ),
               ),
             ),
           ],

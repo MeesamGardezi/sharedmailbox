@@ -126,6 +126,15 @@ class _AppShellState extends State<AppShell> {
                           route: AppRoutes.team,
                           isSelected: currentLocation == AppRoutes.team,
                         ),
+                        _buildNavItem(
+                          context,
+                          icon: Icons.chat_bubble_outline,
+                          selectedIcon: Icons.chat_bubble,
+                          label: 'WhatsApp',
+                          route: AppRoutes.whatsapp,
+                          isSelected: currentLocation == AppRoutes.whatsapp,
+                          iconColor: const Color(0xFF25D366),
+                        ),
 
                         const SizedBox(height: 16),
                         

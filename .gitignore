@@ -13,6 +13,14 @@
 **/.env
 **/coverage/
 **/dist/
+*.local
+.env.*
+!.env.example
+
+
+# WhatsApp Web Session Data
+**/.wwebjs_auth/
+**/.wwebjs_cache/
 
 # Security / Secrets
 **/firebase-service-account.json

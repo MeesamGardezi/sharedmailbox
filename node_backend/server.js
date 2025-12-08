@@ -6,6 +6,9 @@ const simpleParser = require('mailparser').simpleParser;
 const cors = require('cors');
 const admin = require('firebase-admin');
 const path = require('path');
+const http = require('http');
+const { Server } = require('socket.io');
+const { initWhatsApp } = require('./whatsapp');
 
 // Initialize Firebase Admin with service account file in same directory
 const serviceAccount = require('./firebase-service-account.json');
@@ -13,13 +16,42 @@ const serviceAccount = require('./firebase-service-account.json');
 if (!admin.apps.length) {
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        projectId: 'mailautomation-1'
+        projectId: 'mailautomation-1',
+        storageBucket: 'mailautomation-1.firebasestorage.app'
     });
 }
 const db = admin.firestore();
+const storage = admin.storage();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: true,
+        methods: ['GET', 'POST']
+    }
+});
 const port = process.env.PORT || 3000;
+
+// Initialize WhatsApp module
+const whatsapp = initWhatsApp(io, db, storage);
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+    console.log(`[Socket] Client connected: ${socket.id}`);
+
+    socket.on('join-session', (userId) => {
+        socket.join(`user-${userId}`);
+        console.log(`[Socket] ${socket.id} joined room user-${userId}`);
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`[Socket] Client disconnected: ${socket.id}`);
+    });
+});
+
+// Store WhatsApp module on app for route access
+app.set('whatsapp', whatsapp);
 
 // CORS configuration - restrict to frontend domain in production
 app.use(cors({
@@ -1155,6 +1187,211 @@ app.post('/api/calendar/events', async (req, res) => {
 });
 
 // ============================================================================
+// WHATSAPP API ROUTES
+// ============================================================================
+
+/**
+ * POST /api/whatsapp/session/start
+ * Start a WhatsApp session for a user
+ */
+app.post('/api/whatsapp/session/start', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        const whatsapp = req.app.get('whatsapp');
+        await whatsapp.startSession(userId);
+        res.json({ success: true, message: 'Session starting...' });
+    } catch (err) {
+        console.error('[WhatsApp API] Start session error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /api/whatsapp/session/stop
+ * Stop a WhatsApp session
+ */
+app.post('/api/whatsapp/session/stop', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        const whatsapp = req.app.get('whatsapp');
+        await whatsapp.stopSession(userId);
+        res.json({ success: true, message: 'Session stopped' });
+    } catch (err) {
+        console.error('[WhatsApp API] Stop session error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/whatsapp/session/status
+ * Get session status
+ */
+app.get('/api/whatsapp/session/status', async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        const whatsapp = req.app.get('whatsapp');
+        const status = await whatsapp.getSessionStatus(userId);
+        res.json(status);
+    } catch (err) {
+        console.error('[WhatsApp API] Status error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/whatsapp/session/qr
+ * Get QR code for session
+ */
+app.get('/api/whatsapp/session/qr', (req, res) => {
+    const { userId } = req.query;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    const whatsapp = req.app.get('whatsapp');
+    const qr = whatsapp.getQRCode(userId);
+
+    if (qr) {
+        res.json({ qr });
+    } else {
+        res.status(404).json({ error: 'No QR code available' });
+    }
+});
+
+/**
+ * GET /api/whatsapp/groups
+ * Get available WhatsApp groups
+ */
+app.get('/api/whatsapp/groups', async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        const whatsapp = req.app.get('whatsapp');
+        const groups = await whatsapp.getGroups(userId);
+        res.json(groups);
+    } catch (err) {
+        console.error('[WhatsApp API] Groups error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/whatsapp/monitored
+ * Get monitored groups for a user
+ */
+app.get('/api/whatsapp/monitored', async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        const snapshot = await db.collection('monitoredGroups')
+            .where('userId', '==', userId)
+            .get();
+
+        const groups = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        res.json(groups);
+    } catch (err) {
+        console.error('[WhatsApp API] Monitored groups error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /api/whatsapp/monitor
+ * Toggle group monitoring
+ */
+app.post('/api/whatsapp/monitor', async (req, res) => {
+    const { userId, groupId, groupName, isMonitoring } = req.body;
+
+    if (!userId || !groupId) {
+        return res.status(400).json({ error: 'userId and groupId are required' });
+    }
+
+    try {
+        const existingQuery = await db.collection('monitoredGroups')
+            .where('userId', '==', userId)
+            .where('groupId', '==', groupId)
+            .get();
+
+        if (isMonitoring) {
+            if (existingQuery.empty) {
+                await db.collection('monitoredGroups').add({
+                    userId,
+                    groupId,
+                    groupName: groupName || 'Unknown Group',
+                    createdAt: new Date()
+                });
+            }
+        } else {
+            for (const doc of existingQuery.docs) {
+                await doc.ref.delete();
+            }
+        }
+
+        res.json({ success: true, isMonitoring });
+    } catch (err) {
+        console.error('[WhatsApp API] Monitor toggle error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/whatsapp/messages
+ * Get messages for a user
+ */
+app.get('/api/whatsapp/messages', async (req, res) => {
+    const { userId, groupId, limit = 50 } = req.query;
+
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        let query = db.collection('messages')
+            .where('userId', '==', userId)
+            .orderBy('timestamp', 'desc')
+            .limit(parseInt(limit));
+
+        if (groupId) {
+            query = query.where('groupId', '==', groupId);
+        }
+
+        const snapshot = await query.get();
+        const messages = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            timestamp: doc.data().timestamp?.toDate?.() || doc.data().timestamp
+        }));
+
+        res.json(messages);
+    } catch (err) {
+        console.error('[WhatsApp API] Messages error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================================
 // HEALTH CHECK & INFO
 // ============================================================================
 
@@ -1177,14 +1414,24 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
     res.json({
         name: 'SharedBox API',
-        version: '2.1.0',
+        version: '2.2.0',
         status: 'running',
         endpoints: {
             health: '/health',
             googleOAuth: '/auth/google',
             microsoftOAuth: '/auth/microsoft',
             emails: '/api/emails',
-            calendar: '/api/calendar/events'
+            calendar: '/api/calendar/events',
+            whatsapp: {
+                sessionStart: '/api/whatsapp/session/start',
+                sessionStop: '/api/whatsapp/session/stop',
+                sessionStatus: '/api/whatsapp/session/status',
+                sessionQR: '/api/whatsapp/session/qr',
+                groups: '/api/whatsapp/groups',
+                monitored: '/api/whatsapp/monitored',
+                monitor: '/api/whatsapp/monitor',
+                messages: '/api/whatsapp/messages'
+            }
         }
     });
 });
@@ -1193,9 +1440,9 @@ app.get('/', (req, res) => {
 // START SERVER
 // ============================================================================
 
-app.listen(port, () => {
+server.listen(port, () => {
     console.log(`Server running at http://localhost:${port}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:8080'}`);
-    console.log('Email fetching mode: Multi-account (Firestore) + .env fallback');
+    console.log('Email & WhatsApp integration enabled');
 });
