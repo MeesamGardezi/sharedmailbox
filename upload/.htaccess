@@ -1,0 +1,25 @@
+# 1. Security: Disable directory listing so people can't see your files
+Options -Indexes
+
+# 2. cPanel / Passenger Configuration
+# typically, cPanel manages this block automatically. 
+# If you created the app in "Setup Node.js App", try clicking "Restart" or "Save" in cPanel to regenerate this.
+# Otherwise, you need to fill in these paths (check your cPanel for the exact paths):
+
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+# PassengerAppRoot "/home/your_username/public_html/api"
+# PassengerBaseURI "/"
+# PassengerNodejs "/home/your_username/nodevenv/api/16/bin/node"
+# PassengerAppType node
+# PassengerStartupFile server.js
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
+
+# 3. Fallback for VPS / Standard Apache (Ignore if on Shared Hosting/cPanel)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Only if running manually on port 3000
+    # RewriteRule ^$ http://127.0.0.1:3000/ [P,L]
+    # RewriteCond %{REQUEST_FILENAME} !-f
+    # RewriteCond %{REQUEST_FILENAME} !-d
+    # RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+</IfModule>

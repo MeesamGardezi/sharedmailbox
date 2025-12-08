@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../core/config/app_config.dart';
 
 /// Accounts content widget - displays the email accounts management
 /// This is the content that goes inside the AppShell (no its own sidebar)
@@ -84,109 +85,268 @@ class _AccountsContentState extends State<AccountsContent> {
 
   Widget _buildAccountsList() {
     return StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('emailAccounts')
-            .where('companyId', isEqualTo: _companyId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      stream: FirebaseFirestore.instance
+          .collection('emailAccounts')
+          .where('companyId', isEqualTo: _companyId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-          final accounts = snapshot.data!.docs;
+        final accounts = snapshot.data!.docs;
 
-          if (accounts.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.mail_outline, size: 64, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  const Text('No email accounts connected'),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: () => _showAddAccountDialog(context),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Connect Account'),
-                  ),
-                ],
-              ),
-            );
-          }
+        if (accounts.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.mail_outline, size: 64, color: Colors.grey),
+                const SizedBox(height: 16),
+                const Text('No email accounts connected'),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () => _showAddAccountDialog(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Connect Account'),
+                ),
+              ],
+            ),
+          );
+        }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: accounts.length,
-            itemBuilder: (context, index) {
-              final account = accounts[index].data() as Map<String, dynamic>;
-              final docId = accounts[index].id;
-              final isGmail = account['provider'] == 'gmail-oauth';
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: accounts.length,
+          itemBuilder: (context, index) {
+            final account = accounts[index].data() as Map<String, dynamic>;
+            final docId = accounts[index].id;
+            final provider = account['provider'] as String?;
+            final isGmail = provider == 'gmail-oauth';
+            final isMicrosoft = provider == 'microsoft-oauth';
 
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: isGmail ? Colors.red.shade100 : Colors.blue.shade100,
-                    child: Icon(
-                      isGmail ? Icons.g_mobiledata : Icons.mail,
-                      color: isGmail ? Colors.red : Colors.blue,
-                    ),
-                  ),
-                  title: Text(account['name'] ?? account['email'] ?? 'Unknown'),
-                  subtitle: Text(account['email'] ?? ''),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => _deleteAccount(docId),
+            // Determine icon and colors based on provider
+            IconData accountIcon;
+            Color iconColor;
+            Color bgColor;
+
+            if (isGmail) {
+              accountIcon = Icons.g_mobiledata;
+              iconColor = Colors.red;
+              bgColor = Colors.red.shade100;
+            } else if (isMicrosoft) {
+              accountIcon = Icons.window;
+              iconColor = const Color(0xFF0078D4);
+              bgColor = const Color(0xFF0078D4).withOpacity(0.15);
+            } else {
+              accountIcon = Icons.mail;
+              iconColor = Colors.blue;
+              bgColor = Colors.blue.shade100;
+            }
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: bgColor,
+                  child: Icon(
+                    accountIcon,
+                    color: iconColor,
                   ),
                 ),
-              );
-            },
-          );
-        },
-      );
+                title: Text(account['name'] ?? account['email'] ?? 'Unknown'),
+                subtitle: Row(
+                  children: [
+                    Text(account['email'] ?? ''),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: iconColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        isGmail ? 'Gmail' : isMicrosoft ? 'Microsoft' : 'IMAP',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: iconColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => _deleteAccount(docId),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showAddAccountDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Email Account'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.g_mobiledata, color: Colors.red, size: 32),
-              title: const Text('Gmail'),
-              subtitle: const Text('Connect via OAuth'),
-              onTap: () {
-                Navigator.pop(context);
-                _connectGmail();
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.mail, color: Colors.blue, size: 32),
-              title: const Text('IMAP'),
-              subtitle: const Text('Connect via IMAP/SMTP'),
-              onTap: () {
-                Navigator.pop(context);
-                _showImapDialog();
-              },
-            ),
-          ],
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: Colors.white,
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Add Email Account',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.grey),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Connect your email provider to get started.',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+              ),
+              const SizedBox(height: 24),
+              _buildProviderButton(
+                icon: Icons.g_mobiledata,
+                color: Colors.red,
+                title: 'Gmail',
+                subtitle: 'Connect via OAuth',
+                onTap: () {
+                  Navigator.pop(context);
+                  _connectGmail();
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildProviderButton(
+                icon: Icons.window,
+                color: const Color(0xFF0078D4),
+                title: 'Microsoft',
+                subtitle: 'Connect via OAuth',
+                onTap: () {
+                  Navigator.pop(context);
+                  _connectMicrosoft();
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildProviderButton(
+                icon: Icons.mail_outline,
+                color: Colors.blueGrey,
+                title: 'IMAP',
+                subtitle: 'Connect via IMAP/SMTP',
+                onTap: () {
+                  Navigator.pop(context);
+                  _showImapDialog();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProviderButton({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        hoverColor: Colors.grey.shade50,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade200),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 24),
+              ),
+              const SizedBox(width: 16),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey.shade300),
+            ],
+          ),
         ),
       ),
     );
   }
 
   void _connectGmail() {
-    final url = 'https://api.mybox.buildersolve.com/auth/google?companyId=$_companyId&userId=${_user!.uid}';
-    
+    final url = AppConfig.googleAuthUrl(_companyId!, _user!.uid);
+
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (context) => GmailAuthWebView(url: url),
+      builder: (context) => OAuthWebView(
+        url: url,
+        provider: 'Gmail',
+        primaryColor: Colors.red,
+      ),
+    ));
+  }
+
+  void _connectMicrosoft() {
+    final url = AppConfig.microsoftAuthUrl(_companyId!, _user!.uid);
+
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (context) => OAuthWebView(
+        url: url,
+        provider: 'Microsoft',
+        primaryColor: const Color(0xFF0078D4),
+      ),
     ));
   }
 
@@ -195,7 +355,7 @@ class _AccountsContentState extends State<AccountsContent> {
       context: context,
       builder: (context) => const AlertDialog(
         title: Text('IMAP Connection'),
-        content: Text('IMAP configuration form would go here.\n(Use Gmail for now as it is fully implemented)'),
+        content: Text('IMAP configuration form would go here.\n(Use Gmail or Microsoft for now as they are fully implemented)'),
       ),
     );
   }
@@ -219,15 +379,24 @@ class _AccountsContentState extends State<AccountsContent> {
   }
 }
 
-class GmailAuthWebView extends StatefulWidget {
+/// Generic OAuth WebView for Gmail and Microsoft
+class OAuthWebView extends StatefulWidget {
   final String url;
-  const GmailAuthWebView({super.key, required this.url});
+  final String provider;
+  final Color primaryColor;
+
+  const OAuthWebView({
+    super.key,
+    required this.url,
+    required this.provider,
+    required this.primaryColor,
+  });
 
   @override
-  State<GmailAuthWebView> createState() => _GmailAuthWebViewState();
+  State<OAuthWebView> createState() => _OAuthWebViewState();
 }
 
-class _GmailAuthWebViewState extends State<GmailAuthWebView> {
+class _OAuthWebViewState extends State<OAuthWebView> {
   bool _isWaiting = false;
 
   @override
@@ -241,16 +410,16 @@ class _GmailAuthWebViewState extends State<GmailAuthWebView> {
       final uri = Uri.parse(widget.url);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
-        
+
         setState(() {
           _isWaiting = true;
         });
-        
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Complete the OAuth flow in your browser, then return here'),
-              duration: Duration(seconds: 5),
+            SnackBar(
+              content: Text('Complete the ${widget.provider} OAuth flow in your browser, then return here'),
+              duration: const Duration(seconds: 5),
             ),
           );
         }
@@ -274,7 +443,9 @@ class _GmailAuthWebViewState extends State<GmailAuthWebView> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Connect Gmail'),
+        title: Text('Connect ${widget.provider}'),
+        backgroundColor: widget.primaryColor,
+        foregroundColor: Colors.white,
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
@@ -289,7 +460,7 @@ class _GmailAuthWebViewState extends State<GmailAuthWebView> {
               Icon(
                 Icons.open_in_browser,
                 size: 80,
-                color: Colors.indigo.shade300,
+                color: widget.primaryColor.withOpacity(0.7),
               ),
               const SizedBox(height: 24),
               const Text(
@@ -301,7 +472,7 @@ class _GmailAuthWebViewState extends State<GmailAuthWebView> {
               ),
               const SizedBox(height: 16),
               Text(
-                'Complete the Gmail authorization in your browser.',
+                'Complete the ${widget.provider} authorization in your browser.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
@@ -319,7 +490,9 @@ class _GmailAuthWebViewState extends State<GmailAuthWebView> {
               ),
               const SizedBox(height: 32),
               if (_isWaiting) ...[
-                const CircularProgressIndicator(),
+                CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(widget.primaryColor),
+                ),
                 const SizedBox(height: 16),
                 Text(
                   'Waiting for authorization...',
@@ -332,6 +505,8 @@ class _GmailAuthWebViewState extends State<GmailAuthWebView> {
                 icon: const Icon(Icons.refresh),
                 label: const Text('Reopen Browser'),
                 style: ElevatedButton.styleFrom(
+                  backgroundColor: widget.primaryColor,
+                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                 ),
               ),
